@@ -6,7 +6,7 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 
-from model.moe_base import VisionTransformerMoE
+from model.vmoe_base import VisionTransformerMoE
 
 transform = transforms.Compose([
     transforms.ToTensor(),
