@@ -105,7 +105,9 @@ if __name__ == '__main__':
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    
+    IMAGENET_PATH = None
+    train_dataset = datasets.ImageFolder(root=f"{IMAGENET_PATH}/train", transform=train_transform)
+    val_dataset = datasets.ImageFolder(root=f"{IMAGENET_PATH}/val", transform=val_transform)
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,

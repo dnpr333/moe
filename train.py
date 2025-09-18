@@ -15,10 +15,10 @@ def train_one_epoch(model, train_loader, optimizer, classification_criterion, co
     total_samples = 0
     
     # Get the auxiliary loss weight from the config [2]
-    aux_loss_weight = config['training_config']['aux_loss_weight']
+    aux_loss_weight = 0.1
     
     # Get the capacity ratio for training [3]
-    capacity_ratio = config['training_config']['capacity_ratio']
+    capacity_ratio  = 1.05
 
     pbar = tqdm(train_loader, desc="Training")
     for images, labels in pbar:
