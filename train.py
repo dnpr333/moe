@@ -26,8 +26,8 @@ def train_one_epoch(
 
     pbar = tqdm(train_loader, desc="Training", leave=False)
     for batch in pbar:
-        images = batch["image"].to(device)
-        labels = batch["label"].to(device)
+        images = batch[0].to(device)
+        labels = batch[1].to(device)
 
         optimizer.zero_grad()
 

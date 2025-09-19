@@ -17,8 +17,8 @@ def evaluate(model: nn.Module, val_loader, classification_criterion, device: tor
     with torch.no_grad():
         pbar = tqdm(val_loader, desc="Evaluating", leave=False)
         for batch in pbar:
-            images = batch["image"].to(device)
-            labels = batch["label"].to(device)
+            images = batch[0].to(device)
+            labels = batch[1].to(device)
 
             # Forward pass – HuggingFace models return an output object
             outputs = model(images)

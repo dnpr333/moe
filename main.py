@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from evaluate import evaluate
 from earlystopping import EarlyStopping
 from model.vit_moe import ViTMOE
+from tqdm import tqdm # For a nice progress bar
 class HFImageDataset(torch.utils.data.Dataset):
     def __init__(self, hf_split, transform=None):
         self.ds = hf_split
@@ -70,7 +71,6 @@ if __name__ == '__main__':
     
     print("--- Standard V-MoE ---")
     my_model = ViTMOE(config)
-    print(my_model)
 
     # print(f"Loaded {len(new_state_dict)} matching layers.")
     # my_model.load_state_dict(new_state_dict, strict=False)
@@ -105,7 +105,7 @@ if __name__ == '__main__':
     val_dataset   = HFImageDataset(hf_dataset["test"],  transform=val_transform)
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
     val_loader   = DataLoader(val_dataset,   batch_size=64, shuffle=False, num_workers=4)
-    print(f"DataLoaders created. Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
+    # print(f"DataLoaders created. Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
     optimizer = optim.AdamW(my_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-6)
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
