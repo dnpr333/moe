@@ -39,12 +39,11 @@ def train_one_epoch(
         cls_loss = classification_criterion(logits, labels)
 
         # Optional MoE auxiliary loss (if present)
-        aux_loss = 0.0
-        if hasattr(model, "auxiliary_loss"):   # you can aggregate this inside ViTMOE if desired
-            aux_loss = model.auxiliary_loss
-        elif hasattr(model, "model") and hasattr(model.model, "auxiliary_loss"):
-            aux_loss = model.model.auxiliary_loss
-        total_loss = cls_loss + aux_loss_weight * aux_loss
+        aux_loss = getattr(outputs, "auxiliary_loss", 0.0)
+        if not torch.is_tensor(aux_loss):
+            aux_loss = torch.tensor(aux_loss, device=logits.device, dtype=logits.dtype)
+
+        total_loss = cls_loss + config.get("aux_loss_weight", 0.1) * aux_loss
 
         # Back-prop
         total_loss.backward()

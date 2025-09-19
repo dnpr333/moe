@@ -10,7 +10,6 @@ class MoeFFN(nn.Module):
     def __init__(self,
                  hidden_size: int,
                  intermediate_size: int,
-                 is_training: bool,
                  num_experts: int,
                  k: int = 1):
         super().__init__()
