@@ -37,10 +37,11 @@ class EncoderMoe(nn.Module):
 
             self.blocks.append(TransformerBlock(dim, num_heads, mlp_block))
 
-    def forward(self, x):
+    def forward(self, x, is_training):
         all_metrics = []
         for blk in self.blocks:
-            x, metrics = blk(x)
+            
+            x, metrics = blk(x,is_training)
             all_metrics.append(metrics)
         
         if any(all_metrics):
@@ -57,9 +58,12 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = mlp_block
 
-    def forward(self, x):
+    def forward(self, x, is_training):
         x = x + self.attn(*[self.norm1(x)]*3)[0]
-        ffn_out, metrics = self.mlp(self.norm2(x))
+        if isinstance(self.mlp,SparseMoE):
+            ffn_out, metrics = self.mlp(self.norm2(x),is_training)
+        else:
+            ffn_out, metrics = self.mlp(self.norm2(x))
         x = x + ffn_out
         return x, metrics
 class NoisyTopExpertsPerItemRouter(nn.Module):
@@ -112,17 +116,17 @@ class SparseMoE(nn.Module):
             **router_args
         )
 
-    def forward(self, x, capacity_ratio=1.05, is_training=True):
+    def forward(self, x, is_training, capacity_ratio=1.05):
         batch_size, seq_len, dim = x.shape
         # (N*P, D) trong đó N là batch_size, P là seq_len
         x_flat = x.reshape(-1, dim) 
-        num_tokens = x_flat.shape
+        num_tokens = x_flat.size(0)
 
         # 1. Định tuyến (Routing)
         # combine_weights: trọng số để kết hợp đầu ra của expert
         # top_k_indices: chỉ số của các expert được chọn cho mỗi token
         # router_logits: logits thô từ router, dùng để tính loss phụ
-        combine_weights, top_k_indices, router_logits = self.router(x_flat)
+        combine_weights, top_k_indices, l_auxi = self.router(x_flat)
         
         # 2. Tính toán dung lượng bộ đệm (Buffer Capacity)
         # Công thức từ paper [2]
@@ -150,7 +154,7 @@ class SparseMoE(nn.Module):
         
         # Áp dụng mask
         dispatch_mask *= within_capacity_mask.unsqueeze(-1)
-        combine_weights *= within_capacity_mask
+        combine_weights = combine_weights*within_capacity_mask
         
         # 4. Xử lý qua các expert (vector hóa thay vì dùng vòng lặp)
         # Gom các token theo expert đã chọn
@@ -183,15 +187,9 @@ class SparseMoE(nn.Module):
         # 6. Tính toán các hàm loss phụ để cân bằng tải
         metrics = {}
         if is_training:
-            # Importance loss [3]
-            importance_per_expert = torch.sum(F.softmax(router_logits, dim=1), dim=0)
-            l_imp = (torch.std(importance_per_expert) / torch.mean(importance_per_expert))**2
-            
-            # Load loss [4, 5]
             load_per_expert = tokens_per_expert
             l_load = (torch.std(load_per_expert) / torch.mean(load_per_expert))**2
-            
-            # Loss phụ tổng hợp [5]
+            l_imp = l_auxi['auxiliary_loss']
             l_aux = (l_imp + l_load) / 2.0
             metrics['l_aux'] = l_aux
             metrics['load_balance'] = l_load # Để theo dõi
@@ -202,45 +200,45 @@ class SparseMoE(nn.Module):
 # 2. Modular Transformer Components (mirroring vmoe/nn/vit_moe.py)
 # ==================================================================
 
-class SparseMoE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_experts=4, k=1, router_config=None):
-        super().__init__()
-        self.num_experts = num_experts
-        self.k = k
-        self.experts = nn.ModuleList([
-            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU) 
-            for _ in range(num_experts)
-        ])
+# class SparseMoE(nn.Module):
+#     def __init__(self, input_dim, hidden_dim, num_experts=4, k=1, router_config=None):
+#         super().__init__()
+#         self.num_experts = num_experts
+#         self.k = k
+#         self.experts = nn.ModuleList([
+#             Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU) 
+#             for _ in range(num_experts)
+#         ])
         
-        router_args = (router_config or {}).copy()
-        router_args.pop('num_selected_experts', None)
+#         router_args = (router_config or {}).copy()
+#         router_args.pop('num_selected_experts', None)
         
-        self.router = NoisyTopExpertsPerItemRouter(
-            input_dim=input_dim, 
-            num_experts=num_experts, 
-            num_selected_experts=k, 
-            **router_args
-        )
+#         self.router = NoisyTopExpertsPerItemRouter(
+#             input_dim=input_dim, 
+#             num_experts=num_experts, 
+#             num_selected_experts=k, 
+#             **router_args
+#         )
 
-    def forward(self, x):
-        batch_size, seq_len, dim = x.shape
-        x_flat = x.reshape(-1, dim)
+#     def forward(self, x):
+#         batch_size, seq_len, dim = x.shape
+#         x_flat = x.reshape(-1, dim)
         
-        combine_weights, top_k_indices, metrics = self.router(x_flat)
+#         combine_weights, top_k_indices, metrics = self.router(x_flat)
         
-        expert_outputs_flat = torch.zeros_like(x_flat)
-        dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).permute(2, 0, 1)
+#         expert_outputs_flat = torch.zeros_like(x_flat)
+#         dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).permute(2, 0, 1)
 
-        for i in range(self.num_experts):
-            token_indices, choice_indices = torch.where(dispatch_mask[i])
-            if token_indices.shape[0] > 0:
-                expert_input = x_flat[token_indices]
-                expert_output = self.experts[i](expert_input)
-                weights = combine_weights[token_indices, choice_indices].unsqueeze(1)
-                expert_outputs_flat.index_add_(0, token_indices, expert_output * weights)
+#         for i in range(self.num_experts):
+#             token_indices, choice_indices = torch.where(dispatch_mask[i])
+#             if token_indices.shape[0] > 0:
+#                 expert_input = x_flat[token_indices]
+#                 expert_output = self.experts[i](expert_input)
+#                 weights = combine_weights[token_indices, choice_indices].unsqueeze(1)
+#                 expert_outputs_flat.index_add_(0, token_indices, expert_output * weights)
         
-        out = expert_outputs_flat.reshape(batch_size, seq_len, dim)
-        return out, metrics
+#         out = expert_outputs_flat.reshape(batch_size, seq_len, dim)
+#         return out, metrics
 
 # ==================================================================
 # 3. Main Model Architectures (mirroring vmoe/nn/models.py)
@@ -258,12 +256,12 @@ class VisionTransformerMoe(nn.Module):
         self.norm = nn.LayerNorm(dim)
         self.head = nn.Linear(dim, num_classes)
 
-    def forward(self, x):
+    def forward(self, x, is_training):
         x = self.patch_embed(x)
         cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
         x = x + self.pos_embed
-        x, metrics = self.encoder(x)
+        x, metrics = self.encoder(x,is_training)
         x = self.norm(x)
         logits = self.head(x[:, 0])
         return logits, metrics

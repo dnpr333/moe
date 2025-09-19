@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience."""
     def __init__(self, patience=5, min_delta=0, checkpoint_path='best_model.pth'):
@@ -12,7 +13,7 @@ class EarlyStopping:
         self.min_delta = min_delta
         self.checkpoint_path = checkpoint_path
         self.counter = 0
-        self.best_loss = np.Inf
+        self.best_loss = np.inf
         self.early_stop = False
 
     def __call__(self, val_loss, model):

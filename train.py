@@ -30,36 +30,37 @@ def train_one_epoch(model, train_loader, optimizer, classification_criterion, co
         # --- Forward Pass ---
         # The model should return logits for classification and a metrics dict
         # containing the auxiliary loss from the MoE layers.
-        logits, metrics = model(images, capacity_ratio=capacity_ratio, is_training=True)
-        
-        # --- Loss Calculation ---
-        # 1. Calculate the primary classification loss
-        classification_loss = classification_criterion(logits, labels)
-        
-        # 2. Get the auxiliary loss for load balancing from the MoE layers [1, 2]
-        # If you have multiple MoE layers, you might need to average their aux losses.
-        # This implementation assumes the model already handles that and returns a single value.
-        aux_loss = metrics.get('l_aux', 0.0) # Default to 0 if no MoE layer was used
-        
-        # 3. Combine the losses using the weight λ (lambda) [2]
-        total_loss = classification_loss + aux_loss_weight * aux_loss
-        
-        # --- Backward Pass and Optimization ---
-        total_loss.backward()
-        optimizer.step()
-        
-        # --- Statistics ---
-        running_loss += total_loss.item()
-        
-        _, predicted = torch.max(logits.data, 1)
-        total_samples += labels.size(0)
-        total_correct += (predicted == labels).sum().item()
-        
-        pbar.set_postfix({
-            'loss': f"{total_loss.item():.4f}",
-            'cls_loss': f"{classification_loss.item():.4f}",
-            'aux_loss': f"{aux_loss.item() if isinstance(aux_loss, torch.Tensor) else aux_loss:.4f}"
-        })
+        with torch.autograd.set_detect_anomaly(True):
+            logits, metrics = model(images, is_training=True)
+            
+            # --- Loss Calculation ---
+            # 1. Calculate the primary classification loss
+            classification_loss = classification_criterion(logits, labels)
+            
+            # 2. Get the auxiliary loss for load balancing from the MoE layers [1, 2]
+            # If you have multiple MoE layers, you might need to average their aux losses.
+            # This implementation assumes the model already handles that and returns a single value.
+            aux_loss = metrics.get('l_aux', 0.0) # Default to 0 if no MoE layer was used
+            
+            # 3. Combine the losses using the weight λ (lambda) [2]
+            total_loss = classification_loss + aux_loss_weight * aux_loss
+            
+            # --- Backward Pass and Optimization ---
+            total_loss.backward()
+            optimizer.step()
+            
+            # --- Statistics ---
+            running_loss += total_loss.item()
+            
+            _, predicted = torch.max(logits.data, 1)
+            total_samples += labels.size(0)
+            total_correct += (predicted == labels).sum().item()
+            
+            pbar.set_postfix({
+                'loss': f"{total_loss.item():.4f}",
+                'cls_loss': f"{classification_loss.item():.4f}",
+                'aux_loss': f"{aux_loss.item() if isinstance(aux_loss, torch.Tensor) else aux_loss:.4f}"
+            })
         
     epoch_loss = running_loss / len(train_loader)
     epoch_acc = total_correct / total_samples

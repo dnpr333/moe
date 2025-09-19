@@ -2,6 +2,7 @@
 from model.vmoe_base import *
 import timm
 from train import train_one_epoch
+import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchvision import datasets, transforms
@@ -10,6 +11,22 @@ from evaluate import evaluate
 from earlystopping import EarlyStopping
 vit_s_pretrained = timm.create_model('vit_small_patch32_224.augreg_in21k', pretrained=True)
 pretrained_dict = vit_s_pretrained.state_dict()
+class HFImageDataset(torch.utils.data.Dataset):
+    def __init__(self, hf_split, transform=None):
+        self.ds = hf_split
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, idx):
+        item = self.ds[idx]
+        # item["img"] is already a PIL.Image.Image
+        img = item["img"]
+        label = item["fine_label"]
+        if self.transform:
+            img = self.transform(img)
+        return img, label
 def main_training_loop(model, train_loader, val_loader, optimizer, config, num_epochs, device):
     
     model.to(device)
@@ -50,7 +67,7 @@ if __name__ == '__main__':
     config = {
         'image_size': 224,
         'patch_size': 32,
-        'num_classes': 1000,
+        'num_classes': 100,
         'dim': 384,
         'depth': total_depth,
         'num_heads': 6,
@@ -74,11 +91,11 @@ if __name__ == '__main__':
     my_model_dict = my_model.state_dict()
     new_state_dict = {}
     for key, value in pretrained_dict.items():
-        # Kiểm tra xem key từ mô hình pretrained có tồn tại trong mô hình V-MoE của bạn không
         if key in my_model_dict:
             # Kiểm tra xem kích thước tensor có khớp không
             if value.shape == my_model_dict[key].shape:
                 new_state_dict[key] = value
+                print(key)
             else:
                 print(f"Skipping {key}: shape mismatch. Pretrained: {value.shape}, Model: {my_model_dict[key].shape}")
         else:
@@ -94,25 +111,35 @@ if __name__ == '__main__':
     LEARNING_RATE = 0.01
     WEIGHT_DECAY = 1e-4
     train_transform = transforms.Compose([
-    transforms.RandomResizedCrop(config['image_size']),
+    transforms.RandomResizedCrop(config['image_size']),  
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.5071, 0.4867, 0.4408],
+                         std=[0.2675, 0.2565, 0.2761])
     ])
+
     val_transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(config['image_size']),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Resize(256),                # short side to 256
+        transforms.CenterCrop(config['image_size']),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5071, 0.4867, 0.4408],
+                            std=[0.2675, 0.2565, 0.2761])
     ])
-    IMAGENET_PATH = None
-    train_dataset = datasets.ImageFolder(root=f"{IMAGENET_PATH}/train", transform=train_transform)
-    val_dataset = datasets.ImageFolder(root=f"{IMAGENET_PATH}/val", transform=val_transform)
+    from datasets import load_dataset
+    hf_dataset = load_dataset("uoft-cs/cifar100")
+
+    from torchvision.datasets.vision import VisionDataset
+    from PIL import Image
+
+
+
+    train_dataset = HFImageDataset(hf_dataset["train"], transform=train_transform)
+    val_dataset   = HFImageDataset(hf_dataset["test"],  transform=val_transform)
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
-        num_workers=4, # Adjust based on your system's capabilities
+        num_workers=0, 
         pin_memory=True
     )
 
@@ -120,10 +147,19 @@ if __name__ == '__main__':
         val_dataset,
         batch_size=BATCH_SIZE,
         shuffle=False,
-        num_workers=4,
+        num_workers=0,
         pin_memory=True
     )
     print(f"DataLoaders created. Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
     optimizer = optim.AdamW(my_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-6)
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    main_training_loop(
+        my_model,
+        train_loader,
+        val_loader,
+        optimizer,
+        config,
+        NUM_EPOCHS,
+        DEVICE
+    )
