@@ -141,26 +141,3 @@ class SparseMoE(nn.Module):
 
         out = expert_outputs_flat.reshape(batch_size, seq_len, dim)
         return out, metrics
-
-class VisionTransformerMoe(nn.Module):
-    def __init__(self, image_size=32, patch_size=4, num_classes=10, dim=128,
-                 depth=4, num_heads=4, mlp_hidden_dim=256, encoder_config=None):
-        super().__init__()
-        self.patch_embed = PatchEmbed(img_size=image_size, patch_size=patch_size, in_chans=3, embed_dim=dim)
-        num_patches = self.patch_embed.num_patches
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, dim))
-        self.encoder = EncoderMoe(depth, dim, num_heads, mlp_hidden_dim, moe_config=encoder_config.get('moe', {}))
-        self.norm = nn.LayerNorm(dim)
-        self.head = nn.Linear(dim, num_classes)
-
-    def forward(self, x, is_training):
-        x = self.patch_embed(x)
-        cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
-        x = torch.cat((cls_tokens, x), dim=1)
-        x = x + self.pos_embed
-        x, metrics = self.encoder(x,is_training)
-        x = self.norm(x)
-        logits = self.head(x[:, 0])
-        return logits, metrics
-
