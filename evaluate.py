@@ -1,5 +1,5 @@
 import torch
-import tqdm
+from tqdm import tqdm
 def evaluate(model, val_loader, classification_criterion, device):
     """
     Evaluates the model on the validation dataset.
