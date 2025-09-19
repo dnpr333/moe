@@ -66,7 +66,8 @@ if __name__ == '__main__':
     "num_classes": 100,
     "moe_layers": moe_layer_indices, 
     "num_experts": 8,
-    "top_k": 2
+    "top_k": 2,
+    "is_training": True
     }
     
     print("--- Standard V-MoE ---")

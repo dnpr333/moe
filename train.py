@@ -44,7 +44,6 @@ def train_one_epoch(
             aux_loss = model.auxiliary_loss
         elif hasattr(model, "model") and hasattr(model.model, "auxiliary_loss"):
             aux_loss = model.model.auxiliary_loss
-        print(aux_loss)
         total_loss = cls_loss + aux_loss_weight * aux_loss
 
         # Back-prop
