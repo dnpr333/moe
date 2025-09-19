@@ -104,8 +104,8 @@ if __name__ == '__main__':
 
     train_dataset = HFImageDataset(hf_dataset["train"], transform=train_transform)
     val_dataset   = HFImageDataset(hf_dataset["test"],  transform=val_transform)
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
-    val_loader   = DataLoader(val_dataset,   batch_size=64, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, num_workers=4)
+    val_loader   = DataLoader(val_dataset,   batch_size=256, shuffle=False, num_workers=4)
     # print(f"DataLoaders created. Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
     optimizer = optim.AdamW(my_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-6)
