@@ -191,7 +191,7 @@ class SparseMoE(nn.Module):
             l_load = (torch.std(load_per_expert) / torch.mean(load_per_expert))**2
             l_imp = l_auxi['auxiliary_loss']
             l_aux = (l_imp + l_load) / 2.0
-            metrics['l_aux'] = l_aux
+            metrics['auxiliary_loss'] = l_aux
             metrics['load_balance'] = l_load # Để theo dõi
 
         out = expert_outputs_flat.reshape(batch_size, seq_len, dim)

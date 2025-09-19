@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm # For a nice progress bar
 
-def train_one_epoch(model, train_loader, optimizer, classification_criterion, config, device):
+def train_one_epoch(model, train_loader, optimizer, classification_criterion,config, device):
     """
     Trains the model for one epoch.
     
@@ -16,9 +16,6 @@ def train_one_epoch(model, train_loader, optimizer, classification_criterion, co
     
     # Get the auxiliary loss weight from the config [2]
     aux_loss_weight = 0.1
-    
-    # Get the capacity ratio for training [3]
-    capacity_ratio  = 1.05
 
     pbar = tqdm(train_loader, desc="Training")
     for images, labels in pbar:
@@ -40,7 +37,7 @@ def train_one_epoch(model, train_loader, optimizer, classification_criterion, co
             # 2. Get the auxiliary loss for load balancing from the MoE layers [1, 2]
             # If you have multiple MoE layers, you might need to average their aux losses.
             # This implementation assumes the model already handles that and returns a single value.
-            aux_loss = metrics.get('l_aux', 0.0) # Default to 0 if no MoE layer was used
+            aux_loss = metrics['auxiliary_loss']
             
             # 3. Combine the losses using the weight λ (lambda) [2]
             total_loss = classification_loss + aux_loss_weight * aux_loss
