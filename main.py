@@ -107,7 +107,7 @@ if __name__ == '__main__':
     print(f"Loaded {len(new_state_dict)} matching layers.")
     my_model.load_state_dict(new_state_dict, strict=False)
     NUM_EPOCHS = 100
-    BATCH_SIZE = 64
+    BATCH_SIZE = 256
     LEARNING_RATE = 0.01
     WEIGHT_DECAY = 1e-4
     train_transform = transforms.Compose([
