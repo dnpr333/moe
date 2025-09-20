@@ -37,46 +37,6 @@ class MoeFFN(nn.Module):
         self.last_auxiliary_loss = aux.detach()
         return out
 
-
-class ViTMOE(nn.Module):
-    """
-    Vision Transformer with optional Mixture-of-Experts layers.
-
-    Args:
-        config: dict with keys:
-            - model_name: HuggingFace model id (default "google/vit-base-patch16-224-in21k")
-            - num_classes: number of output classes
-            - moe_layers: list of encoder layer indices to replace with MoE
-            - num_experts: number of experts per MoE layer
-            - top_k: how many experts to route to (k in top-k gating)
-    """
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__()
-
-        model_name   = config.get("model_name", "google/vit-base-patch16-224-in21k")
-        num_classes  = config.get("num_classes", 100)
-        moe_layers   = config.get("moe_layers", [])    
-        num_experts  = config.get("num_experts", 4)
-        top_k        = config.get("top_k", 1)
-        is_training  = config.get("is_training",False)
-        # Load base ViT model
-        self.model = ViTForImageClassification.from_pretrained(
-            model_name,
-            num_labels=num_classes,
-            ignore_mismatched_sizes=True
-        )
-
-        # Replace selected encoder blocks with MoE feed-forward
-        for i, block in enumerate(self.model.vit.encoder.layer):
-            if i in moe_layers:
-                hidden = block.intermediate.dense.in_features
-                inter  = block.intermediate.dense.out_features
-                block.intermediate = MoeFFN(hidden, inter,
-                                            num_experts=num_experts,
-                                            k=top_k)
-                # the output dense after the MLP is redundant when using MoE
-                block.output.dense = nn.Identity()
-
 class ViTMOE(nn.Module):
     def __init__(self, config: Dict[str, Any]):
         super().__init__()
