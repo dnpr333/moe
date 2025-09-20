@@ -87,22 +87,33 @@ class SparseMoE(nn.Module):
         buffer_capacity = round((self.k * num_tokens * capacity_ratio) / self.num_experts)
 
         # 3. Dispatch mask and capacity enforcement with priority
+                # 3. Dispatch mask and capacity enforcement with priority
         dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).to(x.dtype)  # (num_tokens, k, num_experts)
         
-        # Priority-based capacity enforcement (vanilla routing approximation)
-        remaining_capacity = torch.full((self.num_experts,), buffer_capacity, device=x.device, dtype=torch.long)
-        within_capacity_mask = torch.zeros(num_tokens, self.k, device=x.device, dtype=torch.bool)
-        
-        for slot in range(self.k):  # Process higher priority slots first
-            slot_experts = top_k_indices[:, slot]  # (num_tokens,)
-            # For each slot, assign in token order (approximates paper; for exact, sort by gate value)
-            position_in_expert = torch.zeros(self.num_experts, device=x.device, dtype=torch.long)
-            for t in range(num_tokens):
-                e = slot_experts[t].item()
-                if position_in_expert[e] < buffer_capacity and remaining_capacity[e] > 0:
-                    within_capacity_mask[t, slot] = True
-                    position_in_expert[e] += 1
-                    remaining_capacity[e] -= 1
+        # Priority-based capacity enforcement (vectorized, device-safe)
+        device = x.device
+        remaining_capacity = torch.full((self.num_experts,), buffer_capacity, device=device, dtype=torch.long)
+        within_capacity_mask = torch.zeros(num_tokens, self.k, device=device, dtype=torch.bool)
+
+        # Loop over slots then experts (num_experts and k small)
+        for slot in range(self.k):
+            slot_experts = top_k_indices[:, slot]  # (num_tokens,) on device
+            # For each expert, take up to remaining_capacity[e] tokens in the order they appear
+            for e in range(self.num_experts):
+                if remaining_capacity[e] <= 0:
+                    continue
+                # indices of tokens that requested expert e at this slot
+                idxs = (slot_experts == e).nonzero(as_tuple=True)[0]  # stays on device
+                if idxs.numel() == 0:
+                    continue
+                # choose first N tokens up to remaining_capacity
+                take = idxs[:remaining_capacity[e].item()] if isinstance(remaining_capacity[e], torch.Tensor) else idxs[:remaining_capacity[e]]
+                if take.numel() == 0:
+                    continue
+                within_capacity_mask[take, slot] = True
+                # decrement remaining capacity
+                remaining_capacity[e] -= take.numel()
+
         
         # Apply masks
         dispatch_mask *= within_capacity_mask.unsqueeze(-1).to(dispatch_mask.dtype)
