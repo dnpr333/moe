@@ -33,7 +33,7 @@ def main_training_loop(model, train_loader, val_loader, optimizer, config, num_e
     classification_criterion = nn.CrossEntropyLoss()
     
     # Initialize Early Stopping
-    early_stopper = EarlyStopping(patience=5, checkpoint_path='vmoe_best.pth')
+    early_stopper = EarlyStopping(patience=3, checkpoint_path='vmoe_best.pth')
 
     for epoch in range(num_epochs):
         print(f"--- Epoch {epoch+1}/{num_epochs} ---")
@@ -76,7 +76,6 @@ if __name__ == '__main__':
     # print(f"Loaded {len(new_state_dict)} matching layers.")
     # my_model.load_state_dict(new_state_dict, strict=False)
     NUM_EPOCHS = 100
-    BATCH_SIZE = 256
     LEARNING_RATE = 1e-3
     WEIGHT_DECAY = 1e-4
     train_transform = transforms.Compose([
