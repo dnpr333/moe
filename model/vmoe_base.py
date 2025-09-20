@@ -155,9 +155,14 @@ class SparseMoE(nn.Module):
         metrics = {}
         if self.training:  # Use self.training for consistency
             load_per_expert = tokens_per_expert.float()
-            l_load = (torch.std(load_per_expert) / (torch.mean(load_per_expert) + 1e-6)) ** 2
+            l_load = 0
+            if self.num_experts > 1:
+                l_load = (torch.std(load_per_expert) /
+                        (torch.mean(load_per_expert) + 1e-6)) ** 2
+            else:
+                l_load = torch.zeros(1, device=load_per_expert.device)
             l_imp = l_auxi['auxiliary_loss']
-            l_aux = (l_imp + l_load) * 0.5  # Average, but paper multiplies by lambda outside
+            l_aux = (l_imp + l_load) * 0.5
             metrics['auxiliary_loss'] = l_aux
             metrics['load_balance'] = l_load
 
