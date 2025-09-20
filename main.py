@@ -66,7 +66,7 @@ if __name__ == '__main__':
     "num_classes": 100,
     "moe_layers": moe_layer_indices, 
     "num_experts": 1,
-    "top_k": 2,
+    "top_k": 1,
     "expert_dropout" : 0.1
     }
     
