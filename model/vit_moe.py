@@ -67,15 +67,15 @@ class ViTMOE(nn.Module):
         )
 
         # Replace selected encoder blocks with MoE feed-forward
-        # for i, block in enumerate(self.model.vit.encoder.layer):
-        #     if i in moe_layers:
-        #         hidden = block.intermediate.dense.in_features
-        #         inter  = block.intermediate.dense.out_features
-        #         block.intermediate = MoeFFN(hidden, inter,
-        #                                     num_experts=num_experts,
-        #                                     k=top_k)
-        #         # the output dense after the MLP is redundant when using MoE
-        #         block.output.dense = nn.Identity()
+        for i, block in enumerate(self.model.vit.encoder.layer):
+            if i in moe_layers:
+                hidden = block.intermediate.dense.in_features
+                inter  = block.intermediate.dense.out_features
+                block.intermediate = MoeFFN(hidden, inter,
+                                            num_experts=num_experts,
+                                            k=top_k)
+                # the output dense after the MLP is redundant when using MoE
+                block.output.dense = nn.Identity()
 
 class ViTMOE(nn.Module):
     def __init__(self, config: Dict[str, Any]):
