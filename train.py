@@ -22,8 +22,6 @@ def train_one_epoch(
     total_correct = 0
     total_samples = 0
 
-    aux_loss_weight = 0.1
-
     pbar = tqdm(train_loader, desc="Training", leave=False)
     for batch in pbar:
         images = batch[0].to(device)
@@ -43,7 +41,7 @@ def train_one_epoch(
         if not torch.is_tensor(aux_loss):
             aux_loss = torch.tensor(aux_loss, device=logits.device, dtype=logits.dtype)
 
-        total_loss = cls_loss + config.get("aux_loss_weight", 0.1) * aux_loss
+        total_loss = cls_loss + config.get("aux_loss_weight", 0.01) * aux_loss
 
         # Back-prop
         total_loss.backward()

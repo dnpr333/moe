@@ -67,7 +67,7 @@ if __name__ == '__main__':
     "moe_layers": moe_layer_indices, 
     "num_experts": 8,
     "top_k": 2,
-    "is_training": True
+    "expert_dropout" : 0.1
     }
     
     print("--- Standard V-MoE ---")
@@ -77,7 +77,7 @@ if __name__ == '__main__':
     # my_model.load_state_dict(new_state_dict, strict=False)
     NUM_EPOCHS = 100
     BATCH_SIZE = 256
-    LEARNING_RATE = 2e-5
+    LEARNING_RATE = 1e-3
     WEIGHT_DECAY = 1e-4
     train_transform = transforms.Compose([
     transforms.RandomResizedCrop(224),  
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     ])
 
     val_transform = transforms.Compose([
-        transforms.Resize(256),                # short side to 256
+        transforms.Resize(256),               
         transforms.CenterCrop(224),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5071, 0.4867, 0.4408],

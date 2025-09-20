@@ -13,7 +13,7 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
         super().__init__()
         self.num_experts = num_experts
         self.k = num_selected_experts
-        self.noise_std = 1/num_experts
+        self.noise_std = 1 / num_experts 
         self.gating_layer = nn.Linear(input_dim, num_experts, bias=False)
 
     def _importance_auxiliary_loss(self, gates_softmax_per_item):
@@ -25,25 +25,25 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
     def forward(self, x):
         logits = self.gating_layer(x)
         if self.training and self.noise_std > 0:
-            noise = torch.randn_like(logits) * self.noise_std / self.num_experts
+            noise = torch.randn_like(logits) * self.noise_std
             logits += noise
         
         gates_softmax = F.softmax(logits, dim=-1)
         importance_loss = self._importance_auxiliary_loss(gates_softmax)
         top_k_gates, top_k_indices = torch.topk(gates_softmax, self.k, dim=-1)
-        combine_weights = F.softmax(top_k_gates, dim=-1)
+        combine_weights = top_k_gates 
         metrics = {'auxiliary_loss': importance_loss}
         return combine_weights, top_k_indices, metrics
 
 class SparseMoE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_experts=4, k=2, router_config=None):
+    def __init__(self, input_dim, hidden_dim, num_experts=4, k=2,expert_dropout = 0.0, router_config=None):
         super().__init__()
         self.num_experts = num_experts
         self.k = k
         self.input_dim = input_dim
 
         self.experts = nn.ModuleList([
-            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU) 
+            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU, drop=expert_dropout) 
             for _ in range(self.num_experts)
         ])
         
@@ -60,84 +60,81 @@ class SparseMoE(nn.Module):
 
     def forward(self, x, is_training, capacity_ratio=1.05):
         batch_size, seq_len, dim = x.shape
-        # (N*P, D) trong đó N là batch_size, P là seq_len
         x_flat = x.reshape(-1, dim) 
         num_tokens = x_flat.size(0)
-        # add an assert to catch mismatch early
         assert x_flat.size(-1) == self.router.gating_layer.in_features, (
             f"Router in_features ({self.router.gating_layer.in_features}) != token dim ({x_flat.size(-1)})"
         )
-        # 1. Định tuyến (Routing)
-        # combine_weights: trọng số để kết hợp đầu ra của expert
-        # top_k_indices: chỉ số của các expert được chọn cho mỗi token
-        # router_logits: logits thô từ router, dùng để tính loss phụ
+
+        # 1. Routing
         combine_weights, top_k_indices, l_auxi = self.router(x_flat)
         
-        # 2. Tính toán dung lượng bộ đệm (Buffer Capacity)
-        # Công thức từ paper [2]
-        # P trong paper là số token/ảnh, ở đây ta gộp N*P = num_tokens
+        # 2. Buffer Capacity
         buffer_capacity = round((self.k * num_tokens * capacity_ratio) / self.num_experts)
 
-        # 3. Phân phối token vào các expert với giới hạn dung lượng
-        expert_outputs_flat = torch.zeros_like(x_flat)
+        # 3. Dispatch mask and capacity enforcement with priority
+        dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).to(x.dtype)  # (num_tokens, k, num_experts)
         
-        # Tạo one-hot mask cho các expert được chọn
-        # shape: (num_tokens, k, num_experts)
-        dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).to(x.dtype)
-
-        # Đếm số lượng token được gán cho mỗi expert
-        # shape: (num_experts)
-        tokens_per_expert = torch.sum(dispatch_mask.sum(dim=1), dim=0)
-
-        # Xác định các token nào được giữ lại (không vượt quá capacity)
-        # Đây là phần logic phức tạp để mô phỏng việc "bỏ" các token dư thừa
-        # shape: (num_tokens, k)
-        position_in_expert_buffer = torch.cumsum(dispatch_mask, dim=0) * dispatch_mask
+        # Priority-based capacity enforcement (vanilla routing approximation)
+        remaining_capacity = torch.full((self.num_experts,), buffer_capacity, device=x.device, dtype=torch.long)
+        within_capacity_mask = torch.zeros(num_tokens, self.k, device=x.device, dtype=torch.bool)
         
-        # Giữ lại token nếu vị trí của nó trong buffer <= buffer_capacity
-        within_capacity_mask = (position_in_expert_buffer <= buffer_capacity).all(dim=-1)
+        for slot in range(self.k):  # Process higher priority slots first
+            slot_experts = top_k_indices[:, slot]  # (num_tokens,)
+            # For each slot, assign in token order (approximates paper; for exact, sort by gate value)
+            position_in_expert = torch.zeros(self.num_experts, device=x.device, dtype=torch.long)
+            for t in range(num_tokens):
+                e = slot_experts[t].item()
+                if position_in_expert[e] < buffer_capacity and remaining_capacity[e] > 0:
+                    within_capacity_mask[t, slot] = True
+                    position_in_expert[e] += 1
+                    remaining_capacity[e] -= 1
         
-        # Áp dụng mask
-        dispatch_mask *= within_capacity_mask.unsqueeze(-1)
-        combine_weights = combine_weights*within_capacity_mask
+        # Apply masks
+        dispatch_mask *= within_capacity_mask.unsqueeze(-1).to(dispatch_mask.dtype)
+        combine_weights *= within_capacity_mask.to(combine_weights.dtype)
         
-        # 4. Xử lý qua các expert (vector hóa thay vì dùng vòng lặp)
-        # Gom các token theo expert đã chọn
-        # shape: (num_tokens * k, dim)
-        expert_inputs = torch.einsum('tki,td->tkd', dispatch_mask, x_flat)
-        expert_inputs = expert_inputs.reshape(-1, dim)
+        # Compute tokens_per_expert after masking for losses
+        tokens_per_expert = dispatch_mask.sum(dim=[0, 1])  # (num_experts,)
         
-        # Chạy qua tất cả các expert cùng lúc
-        # expert_inputs được sắp xếp sao cho num_tokens đầu tiên dành cho expert 0,
-        # num_tokens tiếp theo cho expert 1, v.v.
-        expert_outputs = torch.empty_like(expert_inputs)
+        # 4. Dispatch inputs to experts
+        # Find active dispatches
+        active_mask = within_capacity_mask  # (num_tokens, k)
+        token_indices = torch.arange(num_tokens, device=x.device).unsqueeze(1).expand(-1, self.k)[active_mask]  # (num_active,)
+        slot_indices = torch.arange(self.k, device=x.device).unsqueeze(0).expand(num_tokens, -1)[active_mask]  # (num_active,)
+        expert_indices = top_k_indices[active_mask]  # (num_active,)
+        
+        # Gather inputs
+        expert_inputs = x_flat[token_indices]  # (num_active, dim)
+        
+        # Process per expert
+        expert_outputs_flat = torch.zeros_like(expert_inputs)  # (num_active, dim)
         for i in range(self.num_experts):
-            start = i * num_tokens
-            end = (i + 1) * num_tokens
-            # Chỉ xử lý các token có dispatch_mask > 0
-            idx = torch.where(expert_inputs[start:end].sum(dim=1) != 0)
-            if len(idx) > 0:
-                expert_outputs[start:end][idx] = self.experts[i](expert_inputs[start:end][idx])
-
-        expert_outputs = expert_outputs.reshape(num_tokens, self.k, dim)
+            expert_mask = (expert_indices == i)
+            if expert_mask.sum() > 0:
+                inputs_i = expert_inputs[expert_mask]
+                outputs_i = self.experts[i](inputs_i)
+                expert_outputs_flat[expert_mask] = outputs_i
         
-        # 5. Kết hợp kết quả
-        # Trọng số hóa và cộng dồn kết quả từ các expert
-        # shape: (num_tokens, dim)
+        # 5. Combine results
+        # Scatter back to (num_tokens, k, dim)
+        expert_outputs = torch.zeros(num_tokens, self.k, dim, device=x.device)
+        # Compute flat indices for scatter
+        flat_indices = token_indices * self.k + slot_indices
+        expert_outputs.view(-1, dim)[flat_indices] = expert_outputs_flat
+        
+        # Weighted sum
         weighted_expert_outputs = torch.einsum('tk,tkd->td', combine_weights, expert_outputs)
         
-        # Cộng vào tensor đầu ra
-        expert_outputs_flat += weighted_expert_outputs
-
-        # 6. Tính toán các hàm loss phụ để cân bằng tải
+        # 6. Auxiliary losses
         metrics = {}
-        if is_training:
-            load_per_expert = tokens_per_expert
-            l_load = (torch.std(load_per_expert) / torch.mean(load_per_expert))**2
+        if self.training:  # Use self.training for consistency
+            load_per_expert = tokens_per_expert.float()
+            l_load = (torch.std(load_per_expert) / (torch.mean(load_per_expert) + 1e-6)) ** 2
             l_imp = l_auxi['auxiliary_loss']
-            l_aux = (l_imp + l_load) / 2.0
+            l_aux = (l_imp + l_load) * 0.5  # Average, but paper multiplies by lambda outside
             metrics['auxiliary_loss'] = l_aux
-            metrics['load_balance'] = l_load # Để theo dõi
+            metrics['load_balance'] = l_load
 
-        out = expert_outputs_flat.reshape(batch_size, seq_len, dim)
+        out = weighted_expert_outputs.reshape(batch_size, seq_len, dim)
         return out, metrics
