@@ -58,7 +58,7 @@ class SparseMoE(nn.Module):
             **router_args
         )
 
-    def forward(self, x, is_training, capacity_ratio=1.05):
+    def forward(self, x, capacity_ratio=1.05):
         batch_size, seq_len, dim = x.shape
         x_flat = x.reshape(-1, dim) 
         num_tokens = x_flat.size(0)
