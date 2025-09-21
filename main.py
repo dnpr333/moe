@@ -9,7 +9,7 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from evaluate import evaluate
 from earlystopping import EarlyStopping
-from model.vit_moe import ViTMOE
+from model.vit_moe import ViTMOE, MoeFFN
 from tqdm import tqdm # For a nice progress bar
 class HFImageDataset(torch.utils.data.Dataset):
     def __init__(self, hf_split, transform=None):
@@ -61,7 +61,7 @@ def main_training_loop(model, train_loader, val_loader, optimizer, config, num_e
     # model.load_state_dict(torch.load('vmoe_best.pth'))
 if __name__ == '__main__':
     total_depth = 12
-    moe_layer_indices = tuple(range(0, total_depth, 2))
+    moe_layer_indices = tuple(range(1, total_depth, 2))
     config = {
     "num_classes": 100,
     "moe_layers": moe_layer_indices, 
@@ -72,9 +72,6 @@ if __name__ == '__main__':
     
     print("--- Standard V-MoE ---")
     my_model = ViTMOE(config)
-
-    # print(f"Loaded {len(new_state_dict)} matching layers.")
-    # my_model.load_state_dict(new_state_dict, strict=False)
     NUM_EPOCHS = 100
     LEARNING_RATE = 1e-3
     WEIGHT_DECAY = 1e-4

@@ -21,7 +21,6 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
         nn.init.xavier_uniform_(self.gating_layer.weight)
 
     def _importance_auxiliary_loss(self, gates_softmax_per_item):
-        # Safe when num_experts == 1 (std will be 0)
         importance_per_expert = gates_softmax_per_item.sum(dim=0)
         mean_imp = importance_per_expert.mean()
         std_imp  = importance_per_expert.std(unbiased=False)
@@ -67,18 +66,6 @@ class SparseMoE(nn.Module):
             num_selected_experts=k, 
             **router_args
         )
-        self.reset_parameters()
-    def reset_parameters(self):
-        # Initialize each expert’s MLP weights
-        for expert in self.experts:
-            for m in expert.modules():
-                if isinstance(m, nn.Linear):
-                    nn.init.xavier_uniform_(m.weight)
-                    if m.bias is not None:
-                        nn.init.zeros_(m.bias)
-                elif isinstance(m, nn.LayerNorm):
-                    nn.init.ones_(m.weight)
-                    nn.init.zeros_(m.bias)
     def forward(self, x, capacity_ratio=1.05):
         bsz, seq_len, dim = x.shape
         x_flat = x.reshape(-1, dim)
