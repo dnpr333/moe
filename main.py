@@ -66,7 +66,7 @@ if __name__ == '__main__':
     "moe_layers": moe_layer_indices, 
     "num_experts": 8,
     "top_k": 2,
-    "expert_dropout" : 0.1
+    "expert_dropout" : 0.3
     }
     
     print("--- Standard V-MoE ---")
