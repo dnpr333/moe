@@ -1,18 +1,15 @@
-# vision_transformer_moe_refactored.py
-# Adapted to mirror the structure and features of the V-MoE JAX repository.
-# FIX: Corrected TypeError and implemented proper ensemble routing.
-
+# corrected_router_moe.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.vision_transformer import Mlp, PatchEmbed
+from timm.models.vision_transformer import Mlp
 
-    
+
 class NoisyTopExpertsPerItemRouter(nn.Module):
     def __init__(self, input_dim, num_experts, num_selected_experts):
         super().__init__()
         self.num_experts = num_experts
-        self.k = num_selected_experts
+        self.k = max(1, num_selected_experts)
         self.noise_std = 1 / max(num_experts, 1)
         self.gating_layer = nn.Linear(input_dim, num_experts, bias=False)
         self.reset_parameters()
@@ -23,134 +20,136 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
     def _importance_auxiliary_loss(self, gates_softmax_per_item):
         importance_per_expert = gates_softmax_per_item.sum(dim=0)
         mean_imp = importance_per_expert.mean()
-        std_imp  = importance_per_expert.std(unbiased=False)
+        std_imp = importance_per_expert.std(unbiased=False)  # stable with single element -> 0
         return (std_imp / (mean_imp + 1e-6)) ** 2
 
     def forward(self, x):
-        logits = self.gating_layer(x)
+        """
+        x: (num_tokens, dim)
+        returns:
+          combine_weights: (num_tokens, k)  # float
+          top_k_indices:   (num_tokens, k)  # long
+          metrics: dict with 'importance_loss'
+        """
+        logits = self.gating_layer(x)  # (num_tokens, num_experts)
         if self.training and self.noise_std > 0:
-            logits += torch.randn_like(logits) * self.noise_std
+            logits = logits + torch.randn_like(logits) * self.noise_std
 
-        gates_softmax = F.softmax(logits, dim=-1)
+        gates_softmax = F.softmax(logits, dim=-1)  # (num_tokens, num_experts)
 
-        # Single-expert special case: no top-k needed, all weight to expert 0
         if self.num_experts == 1:
+            # deterministic, all tokens go to expert 0
             top_k_indices = torch.zeros(x.size(0), 1, dtype=torch.long, device=x.device)
-            top_k_gates   = torch.ones_like(top_k_indices, dtype=x.dtype)
+            combine_weights = torch.ones(x.size(0), 1, dtype=x.dtype, device=x.device)
         else:
-            top_k_gates, top_k_indices = torch.topk(gates_softmax, self.k, dim=-1)
+            topk_vals, topk_idx = torch.topk(gates_softmax, self.k, dim=-1)  # (num_tokens, k), (num_tokens, k)
+            combine_weights = topk_vals
+            top_k_indices = topk_idx
 
         metrics = {'importance_loss': self._importance_auxiliary_loss(gates_softmax)}
-        return top_k_gates, top_k_indices, metrics
-    
-    
+        return combine_weights, top_k_indices, metrics
+
+
 class SparseMoE(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_experts=4, k=2,expert_dropout = 0.0, router_config=None):
+    def __init__(self, input_dim, hidden_dim, num_experts=4, k=2, expert_dropout=0.0, router_config=None):
         super().__init__()
-        self.num_experts = num_experts
-        self.k = k
+        self.num_experts = max(1, num_experts)
+        self.k = min(k, self.num_experts)
         self.input_dim = input_dim
 
+        # experts: timm.Mlp(in_features=input_dim, hidden_features=hidden_dim)
         self.experts = nn.ModuleList([
-            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU, drop=expert_dropout) 
+            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU(approximate='tanh'), drop=expert_dropout)
             for _ in range(self.num_experts)
         ])
-        
-        router_args = (router_config or {}).copy()
-        # Tham số k đã được truyền trực tiếp, nên có thể loại bỏ khỏi config
-        router_args.pop('num_selected_experts', None) 
-        
-        self.router = NoisyTopExpertsPerItemRouter(
-            input_dim=input_dim, 
-            num_experts=self.num_experts, 
-            num_selected_experts=k, 
-            **router_args
-        )
+
+        r_args = (router_config or {}).copy()
+        r_args.pop('num_selected_experts', None)
+        self.router = NoisyTopExpertsPerItemRouter(input_dim=input_dim,
+                                                   num_experts=self.num_experts,
+                                                   num_selected_experts=self.k,
+                                                   **r_args)
+
     def forward(self, x, capacity_ratio=1.05):
+        # x: (batch, seq_len, dim)
         bsz, seq_len, dim = x.shape
-        x_flat = x.reshape(-1, dim)
-
-        # 1. Routing
-        combine_w, top_k_idx, router_metrics = self.router(x_flat)
-
-        # 2. Capacity & dispatch
+        x_flat = x.reshape(-1, dim)  # (num_tokens, dim)
         num_tokens = x_flat.size(0)
-        buffer_cap = round((self.k * num_tokens * capacity_ratio) /
-                           max(self.num_experts, 1))
-        dispatch_mask = F.one_hot(top_k_idx,
-                                  num_classes=self.num_experts).to(x.dtype)
 
-        # trivial path if only one expert
-        if self.num_experts == 1:
-            expert_outputs = self.experts[0](x_flat)
-            out = expert_outputs.view(bsz, seq_len, dim)
-            # no balancing loss needed
-            return out, {'auxiliary_loss': router_metrics['importance_loss']}
+        # 1) routing
+        combine_weights, top_k_indices, router_metrics = self.router(x_flat)
         
-        # Priority-based capacity enforcement (vectorized, device-safe)
+        # combine_weights: (num_tokens, k), top_k_indices: (num_tokens, k)
+
+        # 2) buffer capacity
+        buffer_cap = round((self.k * num_tokens * capacity_ratio) / max(self.num_experts, 1))
+
+        # trivial fast path for single expert
+        if self.num_experts == 1:
+            expert_out = self.experts[0](x_flat)            # (num_tokens, dim)
+            out = expert_out.view(bsz, seq_len, dim)
+            # metrics: router importance_loss is safe (should be zero)
+            return out, {'auxiliary_loss': router_metrics.get('importance_loss', torch.tensor(0., device=x.device))}
+
+        # 3) dispatch mask / capacity enforcement
+        dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).to(x.dtype)  # (num_tokens, k, num_experts)
         device = x.device
         remaining_capacity = torch.full((self.num_experts,), buffer_cap, device=device, dtype=torch.long)
         within_capacity_mask = torch.zeros(num_tokens, self.k, device=device, dtype=torch.bool)
 
-        # Loop over slots then experts (num_experts and k small)
+        # iterate by slot then expert (num_experts and k small)
         for slot in range(self.k):
-            slot_experts = top_k_idx[:, slot]  # (num_tokens,) on device
-            # For each expert, take up to remaining_capacity[e] tokens in the order they appear
+            slot_experts = top_k_indices[:, slot]  # (num_tokens,)
             for e in range(self.num_experts):
                 if remaining_capacity[e] <= 0:
                     continue
-                # indices of tokens that requested expert e at this slot
-                idxs = (slot_experts == e).nonzero(as_tuple=True)[0]  # stays on device
+                idxs = (slot_experts == e).nonzero(as_tuple=True)[0]
                 if idxs.numel() == 0:
                     continue
-                # choose first N tokens up to remaining_capacity
-                take = idxs[:remaining_capacity[e].item()] if isinstance(remaining_capacity[e], torch.Tensor) else idxs[:remaining_capacity[e]]
-                if take.numel() == 0:
+                take_n = int(min(idxs.numel(), int(remaining_capacity[e].item())))
+                if take_n == 0:
                     continue
+                take = idxs[:take_n]
                 within_capacity_mask[take, slot] = True
-                # decrement remaining capacity
-                remaining_capacity[e] -= take.numel()
+                remaining_capacity[e] -= take_n
 
-        
-        # Apply masks
-        dispatch_mask *= within_capacity_mask.unsqueeze(-1).to(dispatch_mask.dtype)
-        combine_weights *= within_capacity_mask.to(combine_weights.dtype)
-        
-        # Compute tokens_per_expert after masking for losses
-        tokens_per_expert = dispatch_mask.sum(dim=[0, 1])  # (num_experts,)
-        
-        # 4. Dispatch inputs to experts
-        # Find active dispatches
+        # apply masks
+        dispatch_mask = dispatch_mask * within_capacity_mask.unsqueeze(-1).to(dispatch_mask.dtype)
+        combine_weights = combine_weights * within_capacity_mask.to(combine_weights.dtype) 
+        active_sums = combine_weights.sum(dim=1, keepdim=True)
+        combine_weights = torch.where(active_sums > 0, combine_weights / active_sums, combine_weights)
+
+        # tokens per expert (for load loss)
+        tokens_per_expert = dispatch_mask.sum(dim=[0, 1]).float()  # (num_experts,)
+
+        # 4) dispatch to experts
         active_mask = within_capacity_mask  # (num_tokens, k)
-        token_indices = torch.arange(num_tokens, device=x.device).unsqueeze(1).expand(-1, self.k)[active_mask]  # (num_active,)
-        slot_indices = torch.arange(self.k, device=x.device).unsqueeze(0).expand(num_tokens, -1)[active_mask]  # (num_active,)
-        expert_indices = top_k_idx[active_mask]  # (num_active,)
-        
-        # Gather inputs
+        token_indices = torch.arange(num_tokens, device=device).unsqueeze(1).expand(-1, self.k)[active_mask]  # (num_active,)
+        slot_indices = torch.arange(self.k, device=device).unsqueeze(0).expand(num_tokens, -1)[active_mask]     # (num_active,)
+        expert_indices = top_k_indices[active_mask]  # (num_active,)
+
         expert_inputs = x_flat[token_indices]  # (num_active, dim)
-        
-        # Process per expert
-        expert_outputs_flat = torch.zeros_like(expert_inputs)  # (num_active, dim)
-        for i in range(self.num_experts):
-            expert_mask = (expert_indices == i)
-            if expert_mask.sum() > 0:
-                inputs_i = expert_inputs[expert_mask]
-                outputs_i = self.experts[i](inputs_i)
-                expert_outputs_flat[expert_mask] = outputs_i
-        
-        # 5. Combine results
-        # Scatter back to (num_tokens, k, dim)
-        expert_outputs = torch.zeros(num_tokens, self.k, dim, device=x.device)
-        # Compute flat indices for scatter
-        flat_indices = token_indices * self.k + slot_indices
+
+        # process each expert
+        expert_outputs_flat = torch.zeros_like(expert_inputs)
+        for e in range(self.num_experts):
+            mask_e = (expert_indices == e)
+            if mask_e.sum() > 0:
+                inputs_e = expert_inputs[mask_e]
+                outs_e = self.experts[e](inputs_e)
+                expert_outputs_flat[mask_e] = outs_e
+
+        # 5) scatter back
+        expert_outputs = torch.zeros(num_tokens, self.k, dim, device=device)
+        flat_indices = token_indices * self.k + slot_indices  # indices in flattened (num_tokens*k)
         expert_outputs.view(-1, dim)[flat_indices] = expert_outputs_flat
-        
-        # Weighted sum
+
+        # weighted sum: combine_weights (num_tokens,k), expert_outputs (num_tokens,k,dim) -> (num_tokens, dim)
         weighted_expert_outputs = torch.einsum('tk,tkd->td', combine_weights, expert_outputs)
-        tokens_per_expert = dispatch_mask.sum(dim=[0, 1]).float()
-        l_load = (torch.std(tokens_per_expert, unbiased=False) /
-                  (tokens_per_expert.mean() + 1e-6)) ** 2
-        l_aux = 0.5 * (router_metrics['importance_loss'] + l_load)
+
+        # 6) auxiliary losses
+        l_load = (torch.std(tokens_per_expert, unbiased=False) / (tokens_per_expert.mean() + 1e-6)) ** 2
+        l_aux = 0.5 * (router_metrics.get('importance_loss', torch.tensor(0., device=device)) + l_load)
 
         out = weighted_expert_outputs.view(bsz, seq_len, dim)
         return out, {'auxiliary_loss': l_aux, 'load_balance': l_load}

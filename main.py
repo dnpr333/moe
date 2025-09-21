@@ -11,6 +11,7 @@ from evaluate import evaluate
 from earlystopping import EarlyStopping
 from model.vit_moe import ViTMOE, MoeFFN
 from tqdm import tqdm # For a nice progress bar
+from transformers import ViTForImageClassification
 class HFImageDataset(torch.utils.data.Dataset):
     def __init__(self, hf_split, transform=None):
         self.ds = hf_split
@@ -57,24 +58,22 @@ def main_training_loop(model, train_loader, val_loader, optimizer, config, num_e
             
     print("Training finished.")
     print(f"Best validation loss: {early_stopper.best_loss:.6f}")
-    # You can now load the best model for inference
-    # model.load_state_dict(torch.load('vmoe_best.pth'))
 if __name__ == '__main__':
     total_depth = 12
     moe_layer_indices = tuple(range(1, total_depth, 2))
     config = {
     "num_classes": 100,
     "moe_layers": moe_layer_indices, 
-    "num_experts": 1,
-    "top_k": 1,
+    "num_experts": 8,
+    "top_k": 2,
     "expert_dropout" : 0.1
     }
     
     print("--- Standard V-MoE ---")
     my_model = ViTMOE(config)
     NUM_EPOCHS = 100
-    LEARNING_RATE = 1e-3
-    WEIGHT_DECAY = 1e-4
+    LEARNING_RATE = 1e-4
+    WEIGHT_DECAY = 1e-5
     train_transform = transforms.Compose([
     transforms.RandomResizedCrop(224),  
     transforms.RandomHorizontalFlip(),
