@@ -59,7 +59,7 @@ class SparseMoE(nn.Module):
 
         # experts: timm.Mlp(in_features=input_dim, hidden_features=hidden_dim)
         self.experts = nn.ModuleList([
-            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU(approximate='tanh'), drop=expert_dropout)
+            Mlp(in_features=input_dim, hidden_features=hidden_dim, act_layer=nn.GELU, drop=expert_dropout)
             for _ in range(self.num_experts)
         ])
 
