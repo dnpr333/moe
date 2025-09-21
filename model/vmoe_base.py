@@ -1,7 +1,3 @@
-# vmoe_pytorch.py
-# PyTorch translation of the Flax VisionTransformerMoE module.
-# Multi-device / SPMD / split_rng logic removed — single-device implementation.
-
 import math
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
