@@ -20,7 +20,8 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
     def _importance_auxiliary_loss(self, gates_softmax_per_item):
         importance_per_expert = gates_softmax_per_item.sum(dim=0)
         mean_imp = importance_per_expert.mean()
-        std_imp = importance_per_expert.std(unbiased=False)  # stable with single element -> 0
+        std_imp = importance_per_expert.std(unbiased=False)
+        print('std_imp',std_imp)
         return (std_imp / (mean_imp + 1e-6)) ** 2
 
     def forward(self, x):
@@ -149,6 +150,7 @@ class SparseMoE(nn.Module):
 
         # 6) auxiliary losses
         l_load = (torch.std(tokens_per_expert, unbiased=False) / (tokens_per_expert.mean() + 1e-6)) ** 2
+        print('l_load',l_load)
         l_aux = 0.5 * (router_metrics.get('importance_loss', torch.tensor(0., device=device)) + l_load)
 
         out = weighted_expert_outputs.view(bsz, seq_len, dim)
