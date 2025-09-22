@@ -95,7 +95,7 @@ class SparseMoE(nn.Module):
             expert_out = self.experts[0](x_flat)            # (num_tokens, dim)
             out = expert_out.view(bsz, seq_len, dim)
             # metrics: router importance_loss is safe (should be zero)
-            return out, {'auxiliary_loss': router_metrics.get('importance_loss', torch.tensor(0., device=x.device))}
+            return out, {'auxiliary_loss': router_metrics['importance_loss']}
 
         # 3) dispatch mask / capacity enforcement
         dispatch_mask = F.one_hot(top_k_indices, num_classes=self.num_experts).to(x.dtype)  # (num_tokens, k, num_experts)
@@ -156,7 +156,7 @@ class SparseMoE(nn.Module):
         # 6) auxiliary losses
         l_load = (torch.std(tokens_per_expert, unbiased=False) / (tokens_per_expert.mean() + 1e-6)) ** 2
         print('l_load',l_load)
-        l_aux = 0.5 * (router_metrics.get('importance_loss', torch.tensor(0., device=device)) + l_load)
+        l_aux = 0.5 * (router_metrics['importance_loss'] + l_load)
 
         out = weighted_expert_outputs.view(bsz, seq_len, dim)
         return out, {'auxiliary_loss': l_aux, 'load_balance': l_load}
