@@ -12,10 +12,6 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
         self.k = max(1, num_selected_experts)
         self.noise_std = 1 / max(num_experts, 1)
         self.gating_layer = nn.Linear(input_dim, num_experts, bias=False)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        nn.init.xavier_uniform_(self.gating_layer.weight)
 
     def _importance_auxiliary_loss(self, gates_softmax_per_item):
         importance_per_expert = gates_softmax_per_item.sum(dim=0)
