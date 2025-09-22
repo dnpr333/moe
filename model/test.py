@@ -53,12 +53,12 @@ def get_config(num_classes=10, variant_idx=0, num_total_experts=4,
     config.encoder.moe.router.deterministic = False
     config.encoder.moe.router.dtype = None
 
-    config.name_mapping = {
-    "encoder.layers.0.mlp.fc1.weight": "encoder.layers.0.moe_mlp.fc1.weight",
-    "encoder.layers.0.mlp.fc1.bias": "encoder.layers.0.moe_mlp.fc1.bias",
-    "encoder.layers.0.mlp.fc2.weight": "encoder.layers.0.moe_mlp.fc2.weight",
-    "encoder.layers.0.mlp.fc2.bias": "encoder.layers.0.moe_mlp.fc2.bias",
-    }
+    # config.name_mapping = {
+    #     "encoder.layers.0.mlp.fc1.weight": "encoder.layers.0.moe_mlp.fc1.weight",
+    #     "encoder.layers.0.mlp.fc1.bias": "encoder.layers.0.moe_mlp.fc1.bias",
+    #     "encoder.layers.0.mlp.fc2.weight": "encoder.layers.0.moe_mlp.fc2.weight",
+    #     "encoder.layers.0.mlp.fc2.bias": "encoder.layers.0.moe_mlp.fc2.bias",
+    # }
 
     return config
 
@@ -139,7 +139,9 @@ def main():
             images, labels = images.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs, metrics = model(images)
-            loss = criterion(outputs, labels)
+            aux_loss = metrics.get("auxiliary_loss", 0.0)
+            cls_loss = criterion(outputs, labels)
+            loss = cls_loss + aux_loss * 0.01 # lambda
             loss.backward()
             optimizer.step()
 
