@@ -54,9 +54,9 @@ def train_one_epoch(
         total_samples += labels.size(0)
 
         pbar.set_postfix(
-            loss=f"{total_loss.item():.4f}"
-            # cls=f"{cls_loss.item():.4f}",
-            # aux=f"{float(aux_loss):.4f}" if isinstance(aux_loss, torch.Tensor) else f"{aux_loss:.4f}",
+            loss=f"{total_loss.item():.4f}",
+            cls=f"{cls_loss.item():.4f}",
+            aux=f"{float(aux_loss):.4f}" if isinstance(aux_loss, torch.Tensor) else f"{aux_loss:.4f}"
         )
 
     epoch_loss = running_loss / total_samples
