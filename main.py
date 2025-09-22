@@ -32,6 +32,7 @@ def main_training_loop(model, train_loader, val_loader, optimizer, config, num_e
     
     model.to(device)
     classification_criterion = nn.CrossEntropyLoss()
+    torch.autograd.set_detect_anomaly(True)
     
     # Initialize Early Stopping
     early_stopper = EarlyStopping(patience=3, checkpoint_path='vmoe_best.pth')

@@ -18,7 +18,7 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
         mean_imp = importance_per_expert.mean()
         std_imp = importance_per_expert.std(unbiased=False)
         print('std_imp',std_imp)
-        return (std_imp / (mean_imp + 1e-6)) ** 2
+        return (std_imp / (mean_imp + 1e-8)) ** 2
 
     def forward(self, x):
         """
@@ -32,7 +32,12 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
         if self.training and self.noise_std > 0:
             logits = logits + torch.randn_like(logits) * self.noise_std
         print(f"Logits mean: {logits.mean(dim=0)}")
-        gates_softmax = F.softmax(logits, dim=-1)  # (num_tokens, num_experts)
+        
+        stable_logits = logits.float()
+        gates_softmax = F.softmax(stable_logits, dim=-1)
+        # Cast back to the original dtype for the rest of the network
+        gates_softmax = gates_softmax.to(x.dtype)
+        
         if self.num_experts == 1:
             # deterministic, all tokens go to expert 0
             top_k_indices = torch.zeros(x.size(0), 1, dtype=torch.long, device=x.device)
@@ -67,6 +72,11 @@ class SparseMoE(nn.Module):
                                                    **r_args)
 
     def forward(self, x, capacity_ratio=1.05):
+        if torch.isnan(x).any():
+            print("!!! NaN detected in the input to SparseMoE !!!")
+            # You might want to raise an error to stop execution
+            raise ValueError("NaN input detected")
+        
         # x: (batch, seq_len, dim)
         bsz, seq_len, dim = x.shape
         x_flat = x.reshape(-1, dim)  # (num_tokens, dim)
