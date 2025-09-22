@@ -66,13 +66,13 @@ if __name__ == '__main__':
     "moe_layers": moe_layer_indices, 
     "num_experts": 8,
     "top_k": 2,
-    "expert_dropout" : 0.3
+    "expert_dropout" : 0.0
     }
     
     print("--- Standard V-MoE ---")
     my_model = ViTMOE(config)
     NUM_EPOCHS = 100
-    LEARNING_RATE = 1e-4
+    LEARNING_RATE = 1e-5
     WEIGHT_DECAY = 1e-5
     train_transform = transforms.Compose([
     transforms.RandomResizedCrop(224),  

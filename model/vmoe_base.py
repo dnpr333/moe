@@ -33,7 +33,7 @@ class NoisyTopExpertsPerItemRouter(nn.Module):
             logits = logits + torch.randn_like(logits) * self.noise_std
 
         gates_softmax = F.softmax(logits, dim=-1)  # (num_tokens, num_experts)
-
+        print('gates_softmax',gates_softmax)
         if self.num_experts == 1:
             # deterministic, all tokens go to expert 0
             top_k_indices = torch.zeros(x.size(0), 1, dtype=torch.long, device=x.device)
