@@ -123,7 +123,7 @@ class SparseMoE(nn.Module):
         dispatch_mask = dispatch_mask * within_capacity_mask.unsqueeze(-1).to(dispatch_mask.dtype)
         combine_weights = combine_weights * within_capacity_mask.to(combine_weights.dtype) 
         active_sums = combine_weights.sum(dim=1, keepdim=True)
-        combine_weights = torch.where(active_sums > 0, combine_weights / active_sums, combine_weights)
+        combine_weights = combine_weights / (active_sums + 1e-8)
 
         # tokens per expert (for load loss)
         tokens_per_expert = dispatch_mask.sum(dim=[0, 1]).float()  # (num_experts,)
