@@ -156,6 +156,7 @@ class SparseMoE(nn.Module):
         # 6) auxiliary losses
         l_load = (torch.std(tokens_per_expert, unbiased=False) / (tokens_per_expert.mean() + 1e-6)) ** 2
         print('l_load',l_load)
+        print(f"Importance loss: {router_metrics['importance_loss']}")
         l_aux = 0.5 * (router_metrics['importance_loss'] + l_load)
 
         out = weighted_expert_outputs.view(bsz, seq_len, dim)
