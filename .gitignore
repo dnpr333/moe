@@ -3,3 +3,4 @@ venv/
 utils/
 vmoe/
 model/vmoe_base.py
+Megatron-LM/

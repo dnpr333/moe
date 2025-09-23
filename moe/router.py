@@ -3,7 +3,8 @@ import torch.nn as nn
 
 from abc import ABC, abstractmethod
 
-from router_utils import router_gating_linear, sinkhorn
+from utils import router_gating_linear, sinkhorn, MoEAuxLossAutoScaler, apply_router_token_dropping, apply_random_logits,compute_routing_scores_for_aux_loss
+from loss import switch_load_balancing_loss_func, z_loss_func, topk_routing_with_score_function
 
 class Router(ABC, nn.Module):
     """Base Router class"""
@@ -20,7 +21,7 @@ class Router(ABC, nn.Module):
             config (TransformerConfig): Configuration object for the Transformer model.
             pg_collection (ProcessGroupCollection, optional): Process groups for MoE operations.
         """
-        super().__init__(config)
+        super().__init__()
         self.config = config
         self.num_experts = self.config.num_moe_experts
         self.moe_aux_loss_func = None
@@ -40,7 +41,7 @@ class Router(ABC, nn.Module):
         """Reset the router parameters."""
         if self.config.perform_initialization:
             self.config.init_method(self.weight)
-        self.weight.data = self.weight.data.to(dtype=self.config.params_dtype)
+        # self.weight.data = self.weight.data.to(dtype=self.config.params_dtype)
         setattr(self.weight, 'sequence_parallel', self.config.sequence_parallel)
 
     def gating(self, input: torch.Tensor):
@@ -244,7 +245,7 @@ class TopKRouter(Router):
         tokens_per_expert = routing_map.sum(dim=0)
 
         num_tokens = routing_map.shape[0]
-        total_num_tokens = num_tokens 
+        total_num_tokens = num_tokens # self.tp_cp_group.size() if using pg collections
 
         aux_loss = switch_load_balancing_loss_func(
             probs=scores_for_aux_loss,
@@ -253,10 +254,9 @@ class TopKRouter(Router):
             topk=self.topk,
             num_experts=self.config.num_moe_experts,
             moe_aux_loss_coeff=aux_loss_coeff,
-            fused=self.config.moe_router_fusion,
         )
         probs = self.attach_and_log_load_balancing_loss(
-            probs, aux_loss_coeff, aux_loss, "load_balancing_loss", self.tp_cp_group
+            probs, aux_loss_coeff, aux_loss, "load_balancing_loss"
         )
         return probs
 
@@ -281,11 +281,11 @@ class TopKRouter(Router):
 
         scores_for_aux_loss = scores_for_aux_loss.reshape(seq_length, -1)
         tokens_per_expert = routing_map.reshape(seq_length, -1).sum(dim=0)
-        tokens_per_expert = reduce_from_tensor_model_parallel_region(
-            tokens_per_expert, self.tp_cp_group
-        )
+        # tokens_per_expert = reduce_from_tensor_model_parallel_region(
+        #     tokens_per_expert, self.tp_cp_group
+        # )
 
-        total_num_tokens = seq_length * self.tp_cp_group.size()
+        total_num_tokens = seq_length
 
         aux_loss = (
             switch_load_balancing_loss_func(
@@ -295,12 +295,11 @@ class TopKRouter(Router):
                 topk=self.topk,
                 num_experts=self.config.num_moe_experts,
                 moe_aux_loss_coeff=seq_aux_loss_coeff,
-                fused=self.config.moe_router_fusion,
             )
             / bsz
         )
         probs = self.attach_and_log_load_balancing_loss(
-            probs, seq_aux_loss_coeff, aux_loss, "seq_load_balancing_loss", self.tp_cp_group
+            probs, seq_aux_loss_coeff, aux_loss, "seq_load_balancing_loss"
         )
         return probs
 
@@ -313,16 +312,13 @@ class TopKRouter(Router):
             return probs
 
         tokens_per_expert = routing_map.sum(dim=0)
-        tokens_per_expert = reduce_from_tensor_model_parallel_region(
-            tokens_per_expert, self.tp_dp_cp_group
-        )
 
         self.global_tokens_per_expert += tokens_per_expert
         self.ga_steps += 1
         averated_tokens_per_expert = self.global_tokens_per_expert / self.ga_steps
 
         num_tokens = scores_for_aux_loss.shape[0]
-        total_num_tokens = num_tokens * self.tp_dp_cp_group.size()
+        total_num_tokens = num_tokens
 
         global_aux_loss = switch_load_balancing_loss_func(
             probs=scores_for_aux_loss,
@@ -331,14 +327,13 @@ class TopKRouter(Router):
             topk=self.topk,
             num_experts=self.config.num_moe_experts,
             moe_aux_loss_coeff=global_aux_loss_coeff,
-            fused=self.config.moe_router_fusion,
         )
         probs = self.attach_and_log_load_balancing_loss(
             probs,
             global_aux_loss_coeff,
             global_aux_loss,
             "global_load_balancing_loss",
-            self.tp_dp_cp_group,
+            # self.tp_dp_cp_group,
         )
         return probs
 
@@ -348,7 +343,7 @@ class TopKRouter(Router):
         aux_loss_coeff: float,
         aux_loss: torch.Tensor,
         aux_loss_name: str,
-        reduce_group: torch.distributed.ProcessGroup,
+        # reduce_group: torch.distributed.ProcessGroup,
     ):
         """Attach aux loss function to activation and add to logging."""
         # TODO (zijiey): fix the per_layer_logging for MTP, currently it will incorrectly
@@ -358,13 +353,13 @@ class TopKRouter(Router):
         num_layers = self.config.num_layers
         if self.config.mtp_num_layers is not None:
             num_layers += self.config.mtp_num_layers
-        save_to_aux_losses_tracker(
-            aux_loss_name,
-            aux_loss / aux_loss_coeff,
-            self.layer_number,
-            num_layers,
-            reduce_group=reduce_group,
-        )
+        # save_to_aux_losses_tracker(
+        #     aux_loss_name,
+        #     aux_loss / aux_loss_coeff,
+        #     self.layer_number,
+        #     num_layers,
+        #     # reduce_group=reduce_group,
+        # )
         if self.calculate_per_token_loss:
             # Scale the aux_loss by the number of tokens.
             # The expected final scaling for aux_loss gradients is 1/(num_micro_batches * dp_size).
@@ -408,9 +403,9 @@ class TopKRouter(Router):
             num_layers = self.config.num_layers
             if self.config.mtp_num_layers is not None:
                 num_layers += self.config.mtp_num_layers
-            save_to_aux_losses_tracker(
-                "z_loss", z_loss / moe_z_loss_coeff, self.layer_number, num_layers
-            )
+            # save_to_aux_losses_tracker(
+            #     "z_loss", z_loss / moe_z_loss_coeff, self.layer_number, num_layers
+            # )
         return logits
 
     def apply_input_jitter(self, input: torch.Tensor):
@@ -464,7 +459,6 @@ class TopKRouter(Router):
                 scaling_factor=self.config.moe_router_topk_scaling_factor,
                 score_function=self.score_function,
                 expert_bias=self.expert_bias,
-                fused=self.config.moe_router_fusion,
             )
 
         # Apply token dropping to probs and routing_map.
@@ -482,7 +476,7 @@ class TopKRouter(Router):
         if self.training and torch.is_grad_enabled() and self.is_aux_loss_enabled():
             # Calculate scores and routing_map for aux loss
             routing_map_for_aux_loss, scores_for_aux_loss = compute_routing_scores_for_aux_loss(
-                logits, self.topk, self.score_function, fused=self.config.moe_router_fusion
+                logits, self.topk, self.score_function
             )
             probs = self._apply_aux_loss(probs, scores_for_aux_loss, routing_map_for_aux_loss)
             probs = self._apply_seq_aux_loss(
