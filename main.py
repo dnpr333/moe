@@ -73,7 +73,7 @@ if __name__ == '__main__':
     print("--- Standard V-MoE ---")
     my_model = ViTMOE(config)
     NUM_EPOCHS = 100
-    LEARNING_RATE = 1e-5
+    LEARNING_RATE = 1e-4
     WEIGHT_DECAY = 1e-5
     train_transform = transforms.Compose([
     transforms.RandomResizedCrop(224),  
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
     val_loader   = DataLoader(val_dataset,   batch_size=64, shuffle=False, num_workers=4)
     # print(f"DataLoaders created. Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
-    optimizer = optim.AdamW(my_model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = optim.AdamW(my_model.parameters(), lr=LEARNING_RATE)
     scheduler = CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-6)
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     main_training_loop(
