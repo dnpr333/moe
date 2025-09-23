@@ -126,29 +126,29 @@ class ViTMOE(nn.Module):
         )
 
         # Replace designated layers
-        for i, block in enumerate(self.model.vit.encoder.layer):
-            if i in moe_layers:
-                # Source dense layers (original MLP)
-                dense_intermediate = block.intermediate.dense 
-                dense_output = block.output.dense             # Linear(intermediate -> hidden
+        # for i, block in enumerate(self.model.vit.encoder.layer):
+        #     if i in moe_layers:
+        #         # Source dense layers (original MLP)
+        #         dense_intermediate = block.intermediate.dense 
+        #         dense_output = block.output.dense             # Linear(intermediate -> hidden
 
-                hidden_size = dense_intermediate.in_features
-                intermediate_size = dense_intermediate.out_features
-                moe_ffn = MoeFFN(
-                    hidden_size=hidden_size,
-                    intermediate_size=intermediate_size,
-                    num_experts=num_experts,
-                    k=top_k,
-                    expert_dropout=expert_dropout,
-                    capacity_ratio=capacity_ratio
-                )
+        #         hidden_size = dense_intermediate.in_features
+        #         intermediate_size = dense_intermediate.out_features
+        #         moe_ffn = MoeFFN(
+        #             hidden_size=hidden_size,
+        #             intermediate_size=intermediate_size,
+        #             num_experts=num_experts,
+        #             k=top_k,
+        #             expert_dropout=expert_dropout,
+        #             capacity_ratio=capacity_ratio
+        #         )
 
-                # Copy pretrained MLP weights into all experts
-                moe_ffn.init_from_dense(dense_intermediate, dense_output, verbose=verbose_copy)
+        #         # Copy pretrained MLP weights into all experts
+        #         moe_ffn.init_from_dense(dense_intermediate, dense_output, verbose=verbose_copy)
 
-                # Replace full MLP: assign MoeFFN to block.intermediate and identity to block.output.dense
-                block.intermediate = moe_ffn
-                block.output.dense = nn.Identity()
+        #         # Replace full MLP: assign MoeFFN to block.intermediate and identity to block.output.dense
+        #         block.intermediate = moe_ffn
+        #         block.output.dense = nn.Identity()
 
     def forward(self, pixel_values: torch.Tensor, labels: Optional[torch.Tensor] = None):
         # Reset any stored aux losses
