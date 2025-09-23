@@ -35,7 +35,7 @@ def main_training_loop(model, train_loader, val_loader, optimizer, config, num_e
     torch.autograd.set_detect_anomaly(True)
     
     # Initialize Early Stopping
-    early_stopper = EarlyStopping(patience=3, checkpoint_path='vmoe_best.pth')
+    early_stopper = EarlyStopping(patience=5, checkpoint_path='vit_best.pth')
 
     for epoch in range(num_epochs):
         print(f"--- Epoch {epoch+1}/{num_epochs} ---")
