@@ -1,13 +1,15 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from abc import ABC, abstractmethod
 from typing import Optional, Union
 from dataclasses import dataclass
 
 from router import TopKRouter
-from dispatcher import MoETokenDispatcher
+from dispatcher import MoETokenDispatcher, MoEAllGatherTokenDispatcher
 from utils import build_module
+from expert import SequentialMLP
 
 @dataclass
 class MoESubmodules:
@@ -54,9 +56,19 @@ class BaseMoELayer(nn.Module, ABC):
 
         assert all(map(lambda x: x < self.config.num_moe_experts, self.local_expert_indices))
         self.router: TopKRouter = None
-        self.experts = None
+
+        self.experts = SequentialMLP(
+            num_local_experts=self.num_local_experts,
+            config=self.config,
+            # submodules=self.submodules
+        )
+
         self.shared_experts = None
-        self.token_dispatcher: Optional[MoETokenDispatcher] = None
+        # self.token_dispatcher: Optional[MoETokenDispatcher] = None
+        
+        self.token_dispatcher = MoEAllGatherTokenDispatcher(config=self.config,
+                                            num_local_experts=self.num_local_experts,
+                                            local_expert_indices=self.local_expert_indices)
         self.layer_number = layer_number
 
     @abstractmethod
@@ -105,12 +117,18 @@ class MoELayer(BaseMoELayer):
         # Initialize token dispatcher
 
         # Initialize experts
-        self.experts = build_module(
-            self.submodules.experts,
-            self.num_local_experts,
-            self.config,
-            # pg_collection=pg_collection,
+        self.experts = SequentialMLP(
+            num_local_experts=self.num_local_experts,
+            config=self.config,
+            # submodules=self.submodules
         )
+        # self.experts = build_module(
+        #     self.submodules.experts,
+        #     self.num_local_experts,
+        #     self.config,
+        #     # pg_collection=pg_collection,
+        # )
+
 
         # Initialize shared experts
         if self.use_shared_expert:
@@ -130,6 +148,7 @@ class MoELayer(BaseMoELayer):
         """
         residual = hidden_states
         probs, routing_map = self.router(hidden_states)
+        probs, _ = self.router(hidden_states)
         hidden_states, probs = self.token_dispatcher.dispatch_preprocess(
             hidden_states, routing_map, probs
         )
@@ -141,6 +160,7 @@ class MoELayer(BaseMoELayer):
         tokens and their associated probabilities to the devices hosting their assigned
         experts.
         """
+        # return hidden_states, probs
         return self.token_dispatcher.token_dispatch(hidden_states, probs)
 
     def experts_compute(
@@ -162,9 +182,13 @@ class MoELayer(BaseMoELayer):
         dispatched_input, tokens_per_expert, permuted_probs = (
             self.token_dispatcher.dispatch_postprocess(hidden_states, probs)
         )
+        # dispatched_input, tokens_per_expert, permuted_probs = hidden_states, None, probs
+
+        # print(type(self.experts))
         expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert, permuted_probs)
-        assert mlp_bias is None, f"mlp_bias is not supported for {type(self.token_dispatcher)}"
+        # assert mlp_bias is None, f"mlp_bias is not supported for {type(self.token_dispatcher)}"
         output = self.token_dispatcher.combine_preprocess(expert_output)
+        output = expert_output
 
         return output, shared_expert_output, mlp_bias
 
@@ -216,4 +240,3 @@ class MoELayer(BaseMoELayer):
         self.experts.backward_dw()
         if self.use_shared_expert and not self.shared_expert_overlap:
             self.shared_experts.backward_dw()
-

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
@@ -34,8 +35,12 @@ class ViTLayerWithMoE(ViTLayer):
         hidden_states = self.layernorm_after(hidden_states)
         moe_out, _ = self.moe(hidden_states)
         hidden_states = residual + moe_out
+        
+        # print(outputs.shape, type(outputs))
+        # print(hidden_states.shape, type(hidden_states))
+        # return (hidden_states,) + outputs
 
-        return (hidden_states,) + outputs
+        return hidden_states
 
 def train(model, trainloader, testloader, device, epochs=5, lr=5e-5):
     optimizer = optim.AdamW(model.parameters(), lr=lr)
@@ -135,12 +140,19 @@ if __name__ == "__main__":
         moe_aux_loss_coeff=1e-2,
         num_layers=0,
         mtp_num_layers=None,
+        moe_ffn_hidden_size=3072, # hidden_size * 4
+        gated_linear_unit=False,
+        add_bias_linear=True,
+        activation_func=F.gelu,
+        moe_apply_probs_on_input=False,
+        moe_permute_fusion=False,
     )
 
     for i, block in enumerate(model.vit.encoder.layer):
+        # print(type(model.vit.encoder.layer[i]))
         model.vit.encoder.layer[i] = ViTLayerWithMoE(moe_config, submodules)
 
-    print(type(model))
+    # print(type(model))
     model.to(device)
 
     batch_size = 4
