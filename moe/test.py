@@ -32,15 +32,21 @@ class ViTLayerWithMoE(ViTLayer):
         hidden_states = attention_output + hidden_states
 
         residual = hidden_states
+        
         hidden_states = self.layernorm_after(hidden_states)
+
+        # print("Before MoE:", hidden_states.shape)
         moe_out, _ = self.moe(hidden_states)
+        # print("After MoE:", moe_out.shape)
+
         hidden_states = residual + moe_out
         
         # print(outputs.shape, type(outputs))
         # print(hidden_states.shape, type(hidden_states))
-        # return (hidden_states,) + outputs
+        return (hidden_states,) + outputs
+        # print(f"Hidden states shape: {hidden_states.shape}")
 
-        return hidden_states
+        # return hidden_states
 
 def train(model, trainloader, testloader, device, epochs=5, lr=5e-5):
     optimizer = optim.AdamW(model.parameters(), lr=lr)
@@ -98,13 +104,13 @@ if __name__ == "__main__":
 
     # Load pretrained ViT
     model = AutoModelForImageClassification.from_pretrained(
-        "google/vit-base-patch16-224-in21k",
+        "google/vit-small-patch16-224-in21k",
         num_labels=10  # CIFAR-100
     )
 
     # Replace every encoder block with MoE-enabled block
     submodules = MoESubmodules(
-        experts=nn.ModuleList([nn.Linear(768, 3072) for _ in range(4)]),  # Example: 4 experts
+        experts=nn.ModuleList([nn.Linear(768, 3072) for _ in range(2)]),  # Example: 4 experts
         shared_experts=None  # No shared experts in this setup
     )
     moe_config = ViTConfig(
@@ -120,7 +126,7 @@ if __name__ == "__main__":
         recompute_granularity='none',
         recompute_modules=False,
         sequence_parallel=False,
-        num_moe_experts=4,
+        num_moe_experts=2,
         calculate_per_token_loss=False,
         perform_initialization=False,
         moe_router_topk=2,
@@ -155,9 +161,9 @@ if __name__ == "__main__":
     # print(type(model))
     model.to(device)
 
-    batch_size = 4
+    batch_size = 2
     transform_train = transforms.Compose([
-        transforms.Resize(224),
+        transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         # transforms.Lambda(lambda x: torch.clamp(x, 0, 1)),  # Ensure values are in [0, 1]
@@ -165,7 +171,7 @@ if __name__ == "__main__":
         #                      (0.2673, 0.2564, 0.2762)),
     ])
     transform_test = transforms.Compose([
-        transforms.Resize(224),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         # transforms.Normalize((0.5071, 0.4865, 0.4409),
         #                      (0.2673, 0.2564, 0.2762)),
