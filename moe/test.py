@@ -104,7 +104,7 @@ if __name__ == "__main__":
 
     # Load pretrained ViT
     model = AutoModelForImageClassification.from_pretrained(
-        "google/vit-small-patch16-224-in21k",
+        "google/vit-base-patch16-224-in21k",
         num_labels=10  # CIFAR-100
     )
 
