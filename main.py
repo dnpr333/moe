@@ -65,7 +65,7 @@ if __name__ == '__main__':
     config = {
     "num_classes": 100,
     "moe_layers": moe_layer_indices, 
-    "num_experts": 8,
+    "num_experts": 32,
     "top_k": 2,
     "expert_dropout" : 0.3
     }

@@ -71,7 +71,7 @@ class SparseMoE(nn.Module):
                                                    num_selected_experts=self.k,
                                                    **r_args)
 
-    def forward(self, x, capacity_ratio=1.05):
+    def forward(self, x, capacity_ratio=2):
         if torch.isnan(x).any():
             print("!!! NaN detected in the input to SparseMoE !!!")
             # You might want to raise an error to stop execution

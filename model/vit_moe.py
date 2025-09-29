@@ -70,7 +70,7 @@ class MoeFFN(nn.Module):
                  num_experts: int,
                  k: int = 1,
                  expert_dropout: float = 0.0,
-                 capacity_ratio: float = 1.05):
+                 capacity_ratio: float = 2):
         super().__init__()
         self.capacity_ratio = capacity_ratio
         # **Chú ý**: input_dim = hidden_size, hidden_dim = intermediate_size
@@ -115,7 +115,7 @@ class ViTMOE(nn.Module):
         num_experts    = config.get("num_experts", 4)
         top_k          = config.get("top_k", 1)
         expert_dropout = config.get("expert_dropout", 0.0)
-        capacity_ratio = config.get("capacity_ratio", 1.05)
+        capacity_ratio = config.get("capacity_ratio", 2)
         verbose_copy   = config.get("verbose_copy", False)
 
         # Load pretrained ViT
