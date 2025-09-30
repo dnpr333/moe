@@ -72,6 +72,7 @@ if __name__ == '__main__':
     
     print("--- Standard V-MoE ---")
     my_model = ViTMOE(config)
+    
     NUM_EPOCHS = 100
     LEARNING_RATE = 1e-4
     WEIGHT_DECAY = 1e-5
