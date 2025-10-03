@@ -52,6 +52,7 @@ def train(model, trainloader, testloader, device, epochs=5, lr=5e-5):
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
     image_processor = AutoImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
+    image_processor.do_rescale = False  # disable redundant rescaling
 
     for epoch in range(epochs):
         model.train()
@@ -92,6 +93,64 @@ def train(model, trainloader, testloader, device, epochs=5, lr=5e-5):
                 correct += predicted.eq(labels).sum().item()
         print(f"Test Acc: {100. * correct / total:.2f}%")
 
+# -------------------
+# Mixup & CutMix utils
+# -------------------
+def mixup_data(x, y, alpha=1.0):
+    """Apply Mixup to a batch."""
+    if alpha <= 0:
+        return x, y, 1.0
+    lam = torch.distributions.Beta(alpha, alpha).sample().item()
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size).to(x.device)
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, (y_a, y_b, lam)
+
+
+def cutmix_data(x, y, alpha=1.0):
+    """Apply CutMix to a batch."""
+    if alpha <= 0:
+        return x, y, 1.0
+    lam = torch.distributions.Beta(alpha, alpha).sample().item()
+    batch_size, _, h, w = x.size()
+    index = torch.randperm(batch_size).to(x.device)
+
+    # Bounding box
+    cut_rat = torch.sqrt(1. - lam)
+    cut_w, cut_h = (w * cut_rat).int(), (h * cut_rat).int()
+    cx, cy = torch.randint(w, (1,)).item(), torch.randint(h, (1,)).item()
+
+    x1 = torch.clamp(cx - cut_w // 2, 0, w)
+    x2 = torch.clamp(cx + cut_w // 2, 0, w)
+    y1 = torch.clamp(cy - cut_h // 2, 0, h)
+    y2 = torch.clamp(cy + cut_h // 2, 0, h)
+
+    # Apply CutMix
+    x[:, :, y1:y2, x1:x2] = x[index, :, y1:y2, x1:x2]
+    lam = 1 - ((x2 - x1) * (y2 - y1) / (w * h))
+    y_a, y_b = y, y[index]
+    return x, (y_a, y_b, lam)
+
+
+# -------------------
+# Collate function for dataloader
+# -------------------
+def collate_fn(batch, mixup_alpha=0.8, cutmix_alpha=1.0, prob=0.5):
+    imgs, targets = zip(*batch)
+    imgs = torch.stack(imgs)
+    targets = torch.tensor(targets)
+
+    # Randomly choose Mixup or CutMix
+    if torch.rand(1).item() < prob:
+        if torch.rand(1).item() < 0.5:
+            imgs, targets = mixup_data(imgs, targets, alpha=mixup_alpha)
+        else:
+            imgs, targets = cutmix_data(imgs, targets, alpha=cutmix_alpha)
+
+    return imgs, targets
+
+
 if __name__ == "__main__":
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -105,7 +164,7 @@ if __name__ == "__main__":
     # Load pretrained ViT
     model = AutoModelForImageClassification.from_pretrained(
         "google/vit-base-patch16-224-in21k",
-        num_labels=10  # CIFAR-100
+        num_labels=100  # CIFAR-100
     )
 
     # Replace every encoder block with MoE-enabled block
@@ -161,28 +220,39 @@ if __name__ == "__main__":
     # print(type(model))
     model.to(device)
 
-    batch_size = 2
+    batch_size = 64
+
     transform_train = transforms.Compose([
         transforms.Resize((224, 224)),
+        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
         transforms.RandomHorizontalFlip(),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
+        transforms.RandomRotation(15),
+        transforms.RandomApply([transforms.GaussianBlur(3)], p=0.2),
         transforms.ToTensor(),
-        # transforms.Lambda(lambda x: torch.clamp(x, 0, 1)),  # Ensure values are in [0, 1]
-        # transforms.Normalize((0.5071, 0.4865, 0.4409),
-        #                      (0.2673, 0.2564, 0.2762)),
     ])
+
     transform_test = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        # transforms.Normalize((0.5071, 0.4865, 0.4409),
-        #                      (0.2673, 0.2564, 0.2762)),
     ])
-    trainset = datasets.CIFAR10(root='./data', train=True,
+
+
+    trainset = datasets.CIFAR100(root='./data', train=True,
                                  download=True, transform=transform_train)
-    trainloader = DataLoader(trainset, batch_size=batch_size,
-                             shuffle=True, num_workers=1)
-    testset = datasets.CIFAR10(root='./data', train=False,
+
+    trainloader = DataLoader(
+        trainset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=lambda b: collate_fn(b, mixup_alpha=0.8, cutmix_alpha=1.0, prob=0.7)
+    )
+
+    #trainloader = DataLoader(trainset, batch_size=batch_size,
+    #                        shuffle=True, num_workers=1)
+    testset = datasets.CIFAR100(root='./data', train=False,
                                 download=True, transform=transform_test)
     testloader = DataLoader(testset, batch_size=batch_size,
-                            shuffle=False, num_workers=1)
+                            shuffle=False)
     
-    train(model, trainloader, testloader, device, epochs=5, lr=5e-5)
+    train(model, trainloader, testloader, device, epochs=20, lr=1e-5)

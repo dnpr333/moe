@@ -7,7 +7,9 @@ def permute(x, local_map, num_out_tokens=None, fused=False):
     local_map: [num_tokens, num_local_experts] (binary mask)
     """
     # Convert binary mask -> expert indices
-    expert_idx = local_map.argmax(dim=-1)  # [num_tokens]
+    # expert_idx = local_map.argmax(dim=-1)  # [num_tokens]
+    expert_idx = local_map.int().argmax(dim=-1)
+
 
     # Sort tokens by expert
     sorted_expert_idx, idx = torch.sort(expert_idx)

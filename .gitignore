@@ -1,6 +1,7 @@
 data/
-venv/
 utils/
 vmoe/
 Megatron-LM/
 model/
+moe/
+moe\ copy/
